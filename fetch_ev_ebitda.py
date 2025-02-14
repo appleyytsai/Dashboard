@@ -15,38 +15,35 @@ EV_URL = "https://financialmodelingprep.com/api/v3/enterprise-values/{}?apikey={
 INCOME_URL = "https://financialmodelingprep.com/api/v3/income-statement/{}?limit=5&apikey={}"  # 取5年數據
 
 # 設置資料存儲文件夾
-DATA_DIR = "ev_ebitda_data"
-os.makedirs(DATA_DIR, exist_ok=True)
+# DATA_DIR = "ev_ebitda_data"
+# os.makedirs(DATA_DIR, exist_ok=True)
 
 def calculate_ratios(ticker):
-    ev_file = os.path.join(DATA_DIR, f"{ticker}_ev.csv")
-    ebitda_file = os.path.join(DATA_DIR, f"{ticker}_ebitda.csv")
-    ratio_file = os.path.join(DATA_DIR, f"{ticker}_ev_ebitda_ratio.csv")
+    # 直接從 API 獲取數據
+    ev_response = requests.get(EV_URL.format(ticker, API_KEY)).json()
+    ebitda_response = requests.get(INCOME_URL.format(ticker, API_KEY)).json()
     
-    # 讀取歷史數據（如果存在）
-    if os.path.exists(ratio_file):
-        past_data = pd.read_csv(ratio_file)
-    else:
-        past_data = pd.DataFrame()
-    
-    if not os.path.exists(ev_file) or not os.path.exists(ebitda_file):
+    if not isinstance(ev_response, list) or not isinstance(ebitda_response, list):
+        print(f"API Error for {ticker}: EV or EBITDA data not available")
         return None
     
-    # 讀取 EV 和 EBITDA 數據
-    ev_data = pd.read_csv(ev_file)
-    ebitda_data = pd.read_csv(ebitda_file)
+    ev_data = pd.DataFrame({
+        "Date": [ev["date"] for ev in ev_response],
+        "EnterpriseValue": [ev["enterpriseValue"] for ev in ev_response]
+    })
+    
+    ebitda_data = pd.DataFrame({
+        "Date": [inc["date"] for inc in ebitda_response],
+        "EBITDA_TTM": [inc["ebitda"] for inc in ebitda_response]
+    })
     
     # 合併 EV 和 EBITDA 數據
     merged = pd.merge(ev_data, ebitda_data, on="Date", how="inner")
     merged.insert(0, "Ticker", ticker)
     merged["Current EV/EBITDA Ratio"] = merged["EnterpriseValue"].astype(float) / merged["EBITDA_TTM"].astype(float)
     
-    # 合併歷史數據，確保過去 5 年的完整性
-    full_data = pd.concat([past_data, merged], ignore_index=True).drop_duplicates()
-    full_data.sort_values(by="Date", ascending=False, inplace=True)
-    
     # 取過去 5 年的數據計算統計數值
-    past_5_years = full_data.head(20)["Current EV/EBITDA Ratio"].dropna()
+    past_5_years = merged.head(20)["Current EV/EBITDA Ratio"].dropna()
     median = past_5_years.median() if not past_5_years.empty else None
     high = past_5_years.max() if not past_5_years.empty else None
     low = past_5_years.min() if not past_5_years.empty else None
@@ -66,7 +63,10 @@ def calculate_ratios(ticker):
     merged["5Y Low"] = low
     
     merged.fillna("N/A", inplace=True)
-    merged.to_csv(ratio_file, index=False)
+    
+    # 註解掉存儲數據的部分
+    # merged.to_csv(os.path.join(DATA_DIR, f"{ticker}_ev_ebitda_ratio.csv"), index=False)
+    
     return merged
 
 # 讀取或獲取所有原始數據
